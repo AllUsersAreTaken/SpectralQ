@@ -1,4 +1,4 @@
-"""Convert a HuggingFace bf16 model to 6-bit DCT and benchmark at BS=1."""
+"""Convert a HuggingFace bf16 model to 6-bit DCT and benchmark single-token latency."""
 
 import argparse
 import time
