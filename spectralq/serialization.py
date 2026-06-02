@@ -55,7 +55,7 @@ def save_quantized(model, save_dir, shard_size_gb=2):
 
 
 def from_pretrained_quantized(model_id, checkpoint_dir, device="cuda", block_size=256):
-    """Load a DCT-quantized model from safetensors.
+    """Load a DCT-quantized model from safetensors, ready for inference.
 
     Args:
         model_id: HuggingFace model ID (e.g. ``HuggingFaceTB/SmolLM-1.7B``)
@@ -64,7 +64,8 @@ def from_pretrained_quantized(model_id, checkpoint_dir, device="cuda", block_siz
         block_size: DCT block size used during quantization
 
     Returns:
-        model ready for inference (call ``pack_and_prep_model`` before first forward)
+        model with DCT layers populated from checkpoint; call ``pack_and_prep_model``
+        before the first forward pass.
     """
     from transformers import AutoModelForCausalLM
 
@@ -79,7 +80,17 @@ def from_pretrained_quantized(model_id, checkpoint_dir, device="cuda", block_siz
     from safetensors.torch import load_file as st_load
     print(f"Loading DCT weights from {checkpoint_dir}...")
     state = st_load(os.path.join(checkpoint_dir, "model.safetensors"))
+
+    _qcoeff_keys = [k for k in state if k.endswith("_qcoeff_packed")]
+
+    for k in _qcoeff_keys:
+        mod = model.get_submodule(k.replace("._qcoeff_packed", ""))
+        t = state.pop(k)
+        mod_dev = next(mod.buffers()).device
+        mod._buffers["_qcoeff_packed"] = t.to(device=mod_dev)
+
     missing, unexpected = model.load_state_dict(state, strict=False)
-    print(f"  {len(missing)} missing keys (non-DCT layers), {len(unexpected)} unexpected keys (expect 0)")
+    n_dct = sum(1 for m in model.modules() if isinstance(m, FactShieldHarmonicLinear))
+    print(f"  DCT modules: {n_dct}, loaded {len(_qcoeff_keys)} packed-coeff tensors")
 
     return model
