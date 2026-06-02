@@ -105,7 +105,7 @@ class FactShieldHarmonicLinear(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-    def reconstruct_weight(self):
+    def reconstruct_weight(self, device='cpu'):
         dc = self._dc_raw.float()
         q = getattr(self, 'qcoeff_uint8', None)
         if q is None or q.numel() == 0:
@@ -115,7 +115,8 @@ class FactShieldHarmonicLinear(nn.Module):
         ac = (q.float() * self.qscale.float() + self.qzero.float())
         coeffs = ac.clone()
         coeffs[:, 0:1] = dc
-        basis = self.learned_basis.to(device=coeffs.device, dtype=coeffs.dtype)
+        basis = self.learned_basis.to(device=device, dtype=torch.float32)
+        coeffs = coeffs.to(device=device)
         blocks = coeffs @ basis.T
         flat = blocks.reshape(-1)[:self.original_numel]
         return flat.view(self.out_features, self.in_features)

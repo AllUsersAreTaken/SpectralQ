@@ -29,7 +29,7 @@ Coefficients are stored `[n_chunks, out_f, pk]` — all output rows read the sam
 | Model | Base FP16 | DCT 6-bit | Slowdown | VRAM saved |
 |---|---|---|---|---|
 | SmolLM-1.7B | 20.0 ms, 3.43 GB | 25.3 ms, 2.03 GB | **1.26×** | **−41%** |
-| Qwen2.5-3B | 41.9 ms, 6.30 GB | 122.0 ms, 5.79 GB | **2.91×** | **−8%** |
+| Qwen2.5-3B | 48.8 ms, 6.30 GB | 81.6 ms, 3.41 GB | **1.67×** | **−46%** |
 
 For BS > 1, the kernel loops over tokens in Python (see Limitations).
 
