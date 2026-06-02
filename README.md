@@ -56,9 +56,6 @@ python scripts/generate.py --model HuggingFaceTB/SmolLM-1.7B \
     --prompt "The future of AI is"
 ```
 
-ME.md
-```
-
 ---
 
 ## Limitations
