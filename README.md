@@ -60,28 +60,6 @@ python scripts/generate.py --model HuggingFaceTB/SmolLM-1.7B \
 
 ---
 
-## Repository structure
-
-```
-SpectralQ/
-├── csrc/
-│   ├── dct_chunk_major_kernel.cu    # Two-phase CUDA kernel
-│   ├── compile.ps1                  # Windows build script
-│   └── compile.sh                   # Linux build script
-├── spectralq/
-│   ├── __init__.py
-│   ├── modules.py                   # DCT conversion + FactShieldHarmonicLinear
-│   ├── packer.py                    # 6-bit → int32 pack + chunk-major transpose
-│   └── kernel_loader.py            # ctypes DLL wrapper + monkey-patched forward
-├── scripts/
-│   ├── quantize.py                  # Benchmark DCT vs FP16
-│   └── generate.py                  # Text generation
-├── requirements.txt
-└── README.md
-```
-
----
-
 ## Limitations
 
 - **Token-by-token batch**: The kernel processes one input token per CUDA launch. BS > 1 loops in Python — fine for autoregressive generation (BS=1), slower for benchmarking large batches.
