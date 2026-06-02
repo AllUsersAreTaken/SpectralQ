@@ -107,7 +107,12 @@ class FactShieldHarmonicLinear(nn.Module):
 
     def reconstruct_weight(self):
         dc = self._dc_raw.float()
-        ac = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
+        q = getattr(self, 'qcoeff_uint8', None)
+        if q is None or q.numel() == 0:
+            q = getattr(self, '_qcoeff_for_reconstruct', None)
+        if q is None or q.numel() == 0:
+            raise RuntimeError("No quantized coefficients available for reconstruction")
+        ac = (q.float() * self.qscale.float() + self.qzero.float())
         coeffs = ac.clone()
         coeffs[:, 0:1] = dc
         basis = self.learned_basis.to(device=coeffs.device, dtype=coeffs.dtype)

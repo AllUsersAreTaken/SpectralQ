@@ -31,8 +31,11 @@ def main():
     print(f"Converted {n} DCT layers", flush=True)
     pack_and_prep_model(model)
 
-    messages = [{"role": "user", "content": args.prompt}]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template is not None:
+        messages = [{"role": "user", "content": args.prompt}]
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    else:
+        prompt = args.prompt
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
     out = model.generate(
         **inputs,

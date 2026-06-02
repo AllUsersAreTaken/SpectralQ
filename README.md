@@ -29,9 +29,7 @@ Coefficients are stored `[n_chunks, out_f, pk]` — all output rows read the sam
 | Model | Base FP16 | DCT 6-bit | Slowdown | VRAM saved |
 |---|---|---|---|---|
 | SmolLM-1.7B | 20.0 ms, 3.43 GB | 25.3 ms, 2.03 GB | **1.26×** | **−41%** |
-| Qwen2.5-3B | 54.9 ms, 5.51 GB | — | — | **−46%** (est.) |
-
-At 6 bits, perplexity matches NF4 (ΔPPL ~+0.20 on Wikitext-2 for SmolLM).
+| Qwen2.5-3B | 41.9 ms, 6.30 GB | 122.0 ms, 5.79 GB | **2.91×** | **−8%** |
 
 For BS > 1, the kernel loops over tokens in Python (see Limitations).
 
@@ -67,7 +65,7 @@ ME.md
 
 - **Token-by-token batch**: The kernel processes one input token per CUDA launch. BS > 1 loops in Python — fine for autoregressive generation (BS=1), slower for benchmarking large batches.
 - **CUDAGraph incompatible**: ctypes kernel launches bypass the PyTorch dispatcher — CUDAGraph capture will not work.
-- **Inference only**: `qcoeff_uint8` is freed after packing; `reconstruct_weight()` will error.
+- **Inference only**: `qcoeff_uint8` is freed after packing; `reconstruct_weight()` falls back to a saved copy.
 - **Requires compilation**: The CUDA kernel must be compiled with nvcc + MSVC (Windows) or g++ (Linux) before use.
 
 ---
