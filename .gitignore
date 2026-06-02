@@ -1,0 +1,22 @@
+# Compiled CUDA binaries
+*.dll
+*.exp
+*.lib
+*.so
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Environment
+.env
+venv/
+.venv/
