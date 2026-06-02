@@ -45,6 +45,7 @@ def pack_module_coeffs(mod):
 
     mod._buffers['_qcoeff_packed'] = packed.permute(1, 0, 2).contiguous()
 
+    mod._qcoeff_reconstruct = mod.qcoeff_uint8.cpu()
     mod._buffers.pop("qcoeff_uint8", None)
     try:
         del mod.qcoeff_uint8

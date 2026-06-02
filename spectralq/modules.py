@@ -109,7 +109,7 @@ class FactShieldHarmonicLinear(nn.Module):
         dc = self._dc_raw.float()
         q = getattr(self, 'qcoeff_uint8', None)
         if q is None or q.numel() == 0:
-            q = getattr(self, '_qcoeff_for_reconstruct', None)
+            q = getattr(self, '_qcoeff_reconstruct', None)
         if q is None or q.numel() == 0:
             raise RuntimeError("No quantized coefficients available for reconstruction")
         ac = (q.float() * self.qscale.float() + self.qzero.float())
