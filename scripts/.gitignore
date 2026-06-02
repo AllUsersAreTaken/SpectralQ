@@ -1,0 +1,39 @@
+# ==========================================
+# C/C++ & CUDA Compiled Binaries
+# ==========================================
+# Windows compiled artifacts
+*.dll
+*.lib
+*.exp
+*.exe
+*.obj
+
+# Linux/macOS compiled artifacts (for when others build it)
+*.so
+*.o
+*.a
+*.dylib
+
+# ==========================================
+# Python Caches & Build Folders
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Build directories (created by setuptools or cpp extensions)
+build/
+dist/
+*.egg-info/
+
+# ==========================================
+# IDEs, Environments, & Local Weights
+# ==========================================
+.vscode/
+.idea/
+venv/
+env/
+*.safetensors
+*.bin
+*.pt
