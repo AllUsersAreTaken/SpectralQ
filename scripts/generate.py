@@ -31,7 +31,9 @@ def main():
     print(f"Converted {n} DCT layers", flush=True)
     pack_and_prep_model(model)
 
-    inputs = tokenizer(args.prompt, return_tensors="pt").to(device)
+    messages = [{"role": "user", "content": args.prompt}]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
     out = model.generate(
         **inputs,
         max_new_tokens=args.max_new_tokens,

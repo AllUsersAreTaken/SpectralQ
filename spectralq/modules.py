@@ -74,6 +74,9 @@ class FactShieldHarmonicLinear(nn.Module):
 
         coeffs = blocks @ self.learned_basis
 
+        dc_raw = coeffs[:, 0:1].clone()
+        self.register_buffer("_dc_raw", dc_raw.to(torch.float16))
+
         if coeff_bits > 0 and quant_type == "uniform":
             n_levels = 2 ** coeff_bits
             c_min = coeffs.amin(dim=0, keepdim=True)
@@ -103,7 +106,10 @@ class FactShieldHarmonicLinear(nn.Module):
             self.register_parameter("bias", None)
 
     def reconstruct_weight(self):
-        coeffs = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
+        dc = self._dc_raw.float()
+        ac = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
+        coeffs = ac.clone()
+        coeffs[:, 0:1] = dc
         basis = self.learned_basis.to(device=coeffs.device, dtype=coeffs.dtype)
         blocks = coeffs @ basis.T
         flat = blocks.reshape(-1)[:self.original_numel]
@@ -124,10 +130,25 @@ class FactShieldHarmonicLinear(nn.Module):
         B = x_2d.shape[0]
         x_blocks = x_2d.view(B, n_chunks, BS)
         x_proj = x_blocks @ self.learned_basis.to(x.dtype)
-        coeffs_f32 = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
-        coeffs_3d = coeffs_f32.to(x.dtype).view(out_f, n_chunks, nh)
-        y_2d = F.linear(x_proj.reshape(B, n_chunks * nh),
-                        coeffs_3d.reshape(out_f, n_chunks * nh))
+
+        # DC contribution from preserved fp16 buffer
+        dc_raw_3d = self._dc_raw.to(x.dtype).reshape(out_f, n_chunks, 1)
+        x_dc = x_proj[:, :, 0:1]
+        dc_contrib = F.linear(x_dc.reshape(B, n_chunks),
+                              dc_raw_3d.reshape(out_f, n_chunks))
+
+        # AC contribution from quantized coefficients (skip DC index 0)
+        if self.qcoeff_uint8.numel() > 0:
+            coeffs_f32 = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
+            coeffs_3d = coeffs_f32.to(x.dtype).view(out_f, n_chunks, nh)
+            ac_coeff = coeffs_3d[:, :, 1:]
+            x_ac = x_proj[:, :, 1:]
+            ac_contrib = F.linear(x_ac.reshape(B, n_chunks * (nh - 1)),
+                                  ac_coeff.reshape(out_f, n_chunks * (nh - 1)))
+        else:
+            ac_contrib = 0
+
+        y_2d = dc_contrib + ac_contrib
         if self.bias is not None:
             y_2d = y_2d + self.bias.to(x.dtype)
         return y_2d.reshape(*batch_shape, out_f)
