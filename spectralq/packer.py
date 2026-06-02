@@ -16,7 +16,7 @@ def pack_module_coeffs(mod):
     simultaneously, broadcasting through L2 instead of scattering across
     DRAM pages.
     """
-    if hasattr(mod, '_qcoeff_packed'):
+    if hasattr(mod, '_qcoeff_packed') and mod._qcoeff_packed.numel() > 0:
         return
     u8 = mod.qcoeff_uint8
     out_f = mod.out_features
@@ -39,7 +39,7 @@ def pack_module_coeffs(mod):
              (as_5[:, :, :, 4] << 24)
 
     chunk_major = packed.permute(1, 0, 2).contiguous()
-    mod._qcoeff_packed = chunk_major
+    mod._buffers['_qcoeff_packed'] = chunk_major
     mod._n_chunks = n_chunks
     mod._pk_per_chunk = pk
     mod._cm_out_features = out_f

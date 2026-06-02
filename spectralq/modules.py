@@ -93,6 +93,7 @@ class FactShieldHarmonicLinear(nn.Module):
             self.register_buffer("qscale", torch.empty(0, dtype=torch.float16))
             self.register_buffer("qzero", torch.empty(0, dtype=torch.float16))
 
+        self.register_buffer("_qcoeff_packed", torch.empty(0, dtype=torch.int32))
         self.register_buffer("protected_mask", torch.zeros(1, dtype=torch.bool))
         self.register_buffer("fact_weights", torch.zeros(1))
 
