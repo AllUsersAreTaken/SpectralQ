@@ -30,7 +30,12 @@ def pack_module_coeffs(mod):
     if hasattr(mod, '_qcoeff_packed') and mod._qcoeff_packed.numel() > 0:
         return
 
-    mod._buffers["_qcoeff_for_reconstruct"] = mod.qcoeff_uint8.cpu()
+    if not hasattr(mod, 'qcoeff_uint8') or mod.qcoeff_uint8.numel() == 0:
+        raise RuntimeError(
+            "qcoeff_uint8 has been freed (probably by _forward_freq). "
+            "Call pack_and_prep_model before the first forward pass.")
+
+    mod._qcoeff_reconstruct = mod.qcoeff_uint8.cpu()
     u8 = mod.qcoeff_uint8.reshape(out_f, n_chunks, bs)
     pad = pk * 5 - bs
     if pad > 0:
@@ -45,7 +50,6 @@ def pack_module_coeffs(mod):
 
     mod._buffers['_qcoeff_packed'] = packed.permute(1, 0, 2).contiguous()
 
-    mod._qcoeff_reconstruct = mod.qcoeff_uint8.cpu()
     mod._buffers.pop("qcoeff_uint8", None)
     try:
         del mod.qcoeff_uint8

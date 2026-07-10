@@ -87,6 +87,10 @@ void launch_dct_forward(
     dim3 bg(block_size);
 
     switch (block_size) {
+        case 64:
+            project_token_kernel<64><<<gp, bp, 0, stream>>>(x, dct_basis, x_freq, n_chunks);
+            gemv_chunk_major_kernel<64><<<gg, bp, 0, stream>>>(x_freq, qcoeff_packed, qscale, qzero, out, out_features, n_chunks, packs_per_chunk);
+            break;
         case 128:
             project_token_kernel<128><<<gp, bp, 0, stream>>>(x, dct_basis, x_freq, n_chunks);
             gemv_chunk_major_kernel<128><<<gg, bp, 0, stream>>>(x_freq, qcoeff_packed, qscale, qzero, out, out_features, n_chunks, packs_per_chunk);

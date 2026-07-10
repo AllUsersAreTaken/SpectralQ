@@ -65,6 +65,10 @@ _kernels = _KernelCache()
 def _prep_lin(lin, dll_dir):
     if hasattr(lin, '_dct_prepped'):
         return
+    if not hasattr(lin, 'qcoeff_uint8') or lin.qcoeff_uint8.numel() == 0:
+        raise RuntimeError(
+            f"qcoeff_uint8 is missing on layer {id(lin):#x} — it was probably freed by "
+            f"_forward_freq. Run pack_and_prep_model BEFORE the first forward pass.")
     dev = lin.qcoeff_uint8.device
     k, is_cm = _kernels.get(dll_dir)
     if is_cm:
@@ -169,3 +173,4 @@ def pack_and_prep_model(model, dll_dir=None):
     for mod in model.modules():
         if isinstance(mod, FactShieldHarmonicLinear) and getattr(mod, 'coeff_bits', 0) > 0:
             mod.forward = make_dct_forward(mod, model, dll_dir).__get__(mod, type(mod))
+            mod._free_python()

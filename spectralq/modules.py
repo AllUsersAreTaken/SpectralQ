@@ -71,6 +71,7 @@ class FactShieldHarmonicLinear(nn.Module):
         flat = residual_weight.detach().float().flatten()
         blocks = flat.view(-1, self.block_size)
         self.num_blocks = blocks.shape[0]
+        self._n_chunks = padded_in_f // self.block_size
 
         coeffs = blocks @ self.learned_basis
 
@@ -105,30 +106,49 @@ class FactShieldHarmonicLinear(nn.Module):
         else:
             self.register_parameter("bias", None)
 
+    def _ensure_coeffs_fp16(self):
+        if hasattr(self, '_coeffs_fp16') and self._coeffs_fp16.numel() > 0:
+            return
+        BS = self.block_size
+        nh = BS
+        out_f = self.out_features
+        n_chunks = self._n_chunks
+        if hasattr(self, 'qcoeff_uint8') and self.qcoeff_uint8.numel() > 0:
+            ac = self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float()
+            coeffs_fp16 = ac.half().view(out_f, n_chunks, nh)
+            coeffs_fp16[:, :, 0:1] = self._dc_raw.reshape(out_f, n_chunks, 1)
+            self.register_buffer('_coeffs_fp16', coeffs_fp16.reshape(out_f, n_chunks * nh))
+            self._buffers.pop("qcoeff_uint8", None)
+            self._buffers.pop("qscale", None)
+            self._buffers.pop("qzero", None)
+        elif hasattr(self, 'freq_coeffs') and self.freq_coeffs.numel() > 0:
+            coeffs_fp16 = self.freq_coeffs.half().view(out_f, n_chunks, nh)
+            coeffs_fp16[:, :, 0:1] = self._dc_raw.reshape(out_f, n_chunks, 1)
+            self.register_buffer('_coeffs_fp16', coeffs_fp16.reshape(out_f, n_chunks * nh))
+
+    def _free_python(self):
+        self._buffers.pop("_coeffs_fp16", None)
+
     def reconstruct_weight(self, device='cpu'):
-        dc = self._dc_raw.float()
-        q = getattr(self, 'qcoeff_uint8', None)
-        if q is None or q.numel() == 0:
-            q = getattr(self, '_qcoeff_reconstruct', None)
-        if q is None or q.numel() == 0:
-            raise RuntimeError("No quantized coefficients available for reconstruction")
-        ac = (q.float() * self.qscale.float() + self.qzero.float())
-        coeffs = ac.clone()
-        coeffs[:, 0:1] = dc
+        self._ensure_coeffs_fp16()
+        coeffs = self._coeffs_fp16.float()
         basis = self.learned_basis.to(device=device, dtype=torch.float32)
         coeffs = coeffs.to(device=device)
-        blocks = coeffs @ basis.T
+        BS = self.block_size
+        n_chunks = coeffs.shape[-1] // BS
+        blocks = coeffs.view(-1, BS) @ basis.T
         flat = blocks.reshape(-1)[:self.original_numel]
         return flat.view(self.out_features, self.in_features)
 
     def forward(self, x):
         if getattr(self, '_dct_prepped', False):
             return self._dct_forward(x)
+        self._ensure_coeffs_fp16()
         return self._forward_freq(x)
 
     def _forward_freq(self, x):
         BS = self.block_size
-        nh = self.learned_basis.shape[-1]
+        nh = BS
         out_f, in_f = self.out_features, self.in_features
         n_chunks = in_f // BS
         *batch_shape, in_feat = x.shape
@@ -136,25 +156,9 @@ class FactShieldHarmonicLinear(nn.Module):
         B = x_2d.shape[0]
         x_blocks = x_2d.view(B, n_chunks, BS)
         x_proj = x_blocks @ self.learned_basis.to(x.dtype)
-
-        # DC contribution from preserved fp16 buffer
-        dc_raw_3d = self._dc_raw.to(x.dtype).reshape(out_f, n_chunks, 1)
-        x_dc = x_proj[:, :, 0:1]
-        dc_contrib = F.linear(x_dc.reshape(B, n_chunks),
-                              dc_raw_3d.reshape(out_f, n_chunks))
-
-        # AC contribution from quantized coefficients (skip DC index 0)
-        if self.qcoeff_uint8.numel() > 0:
-            coeffs_f32 = (self.qcoeff_uint8.float() * self.qscale.float() + self.qzero.float())
-            coeffs_3d = coeffs_f32.to(x.dtype).view(out_f, n_chunks, nh)
-            ac_coeff = coeffs_3d[:, :, 1:]
-            x_ac = x_proj[:, :, 1:]
-            ac_contrib = F.linear(x_ac.reshape(B, n_chunks * (nh - 1)),
-                                  ac_coeff.reshape(out_f, n_chunks * (nh - 1)))
-        else:
-            ac_contrib = 0
-
-        y_2d = dc_contrib + ac_contrib
+        # Single fused DC+AC F.linear: pre-dequantized fp16 coefficients
+        coeffs = self._coeffs_fp16.to(x.dtype)
+        y_2d = F.linear(x_proj.reshape(B, n_chunks * nh), coeffs)
         if self.bias is not None:
             y_2d = y_2d + self.bias.to(x.dtype)
         return y_2d.reshape(*batch_shape, out_f)

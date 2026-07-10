@@ -15,12 +15,17 @@ coeffs[block][k] = DCT(block)[k]
 qcoeff[block][k] = round((coeffs - min_k) / scale_k), clamped to [0, 63]
 ```
 
-The forward pass uses two CUDA kernels per token:
+The forward pass has two modes:
 
+**CUDA kernel path** (primary): two kernels per token —
 1. **Projection** — DCT of the input: `n_chunks` blocks project `x` chunks into frequency space.
 2. **Chunk-major GEMV** — One block per output row reads chunked, packed coefficients (5 × 6-bit per `uint32`) and accumulates the dot product with the frequency-domain input.
 
+**Python fallback path**: dequantizes coefficients to fp16 once (lazy, first forward call), merges DC and AC into a single fp16 tensor, then runs one fused `F.linear` per layer — no per-call dequantization overhead.
+
 Coefficients are stored `[n_chunks, out_f, pk]` — all output rows read the same contiguous chunk slab, maximizing L2 reuse. Naive `[out_f, n_chunks, pk]` thrashes L2 to ~10% of peak bandwidth; chunk-major layout achieves **61%** on RTX 4060.
+
+Supported block sizes: 64, 128, 256, 512.
 
 ---
 
@@ -28,8 +33,8 @@ Coefficients are stored `[n_chunks, out_f, pk]` — all output rows read the sam
 
 | Model | Base FP16 | DCT 6-bit | Slowdown | VRAM saved |
 |---|---|---|---|---|
-| SmolLM-1.7B | 20.0 ms, 3.43 GB | 25.3 ms, 2.03 GB | **1.26×** | **−41%** |
-| Qwen2.5-3B | 48.8 ms, 6.30 GB | 81.6 ms, 3.41 GB | **1.67×** | **−46%** |
+| SmolLM-1.7B | 28.3 ms, 3.43 GB | 38.3 ms, 2.04 GB | **1.35×** | **−41%** |
+| Qwen2.5-3B | 44.5 ms, 6.30 GB | 74.7 ms, 3.36 GB | **1.68×** | **−47%** |
 
 For BS > 1, the kernel loops over tokens in Python (see Limitations).
 
@@ -62,8 +67,8 @@ python scripts/generate.py --model HuggingFaceTB/SmolLM-1.7B \
 
 - **Token-by-token batch**: The kernel processes one input token per CUDA launch. BS > 1 loops in Python — fine for autoregressive generation (BS=1), slower for benchmarking large batches.
 - **CUDAGraph incompatible**: ctypes kernel launches bypass the PyTorch dispatcher — CUDAGraph capture will not work.
-- **Inference only**: `qcoeff_uint8` is freed after packing; `reconstruct_weight()` falls back to a saved copy.
 - **Requires compilation**: The CUDA kernel must be compiled with nvcc + MSVC (Windows) or g++ (Linux) before use.
+- **Pack before forward**: `pack_and_prep_model()` must be called before the first forward pass — the Python fallback path frees `qcoeff_uint8` after converting to fused fp16 coefficients.
 
 ---
 
