@@ -62,12 +62,18 @@ def main():
 
     # --- spectral KV: custom loop ---
     if args.spectral_kv:
+        def _clen(c):
+            if hasattr(c, 'get_seq_length'):
+                return c.get_seq_length()
+            return c[0][0].shape[2]
+
         print(f"Spectral KV: window={args.kv_window}, "
               f"keep_ratio={args.kv_keep_ratio}", flush=True)
 
         past_key_values = None
         generated = input_ids.input_ids
         total_tokens = input_ids.input_ids.shape[1]
+        kv_positions = torch.arange(total_tokens, device='cpu', dtype=torch.long)
         tok_this = 0
         t0 = time.perf_counter()
 
@@ -81,26 +87,24 @@ def main():
 
         # decode loop
         for step in range(args.max_new_tokens - 1):
-            cache_len = past_key_values[0][0].shape[2]
-            # Compute position for the next token
             pos = torch.tensor([[total_tokens]], device=device)
             out = model(generated[:, -1:], use_cache=True,
                         past_key_values=past_key_values,
                         position_ids=pos)
             past_key_values = out.past_key_values
             total_tokens += 1
+            kv_positions = torch.cat([kv_positions, torch.tensor([total_tokens - 1])])
             next_id = _sample(out.logits, args.temperature, args.top_k)
             generated = torch.cat([generated, next_id], dim=-1)
             tok_this += 1
 
-            cache_len = past_key_values[0][0].shape[2]
-            if cache_len > args.kv_window:
-                before = cache_len
-                past_key_values, pos_ids = compress_kv_cache(
-                    past_key_values, sink_tokens=4,
+            if _clen(past_key_values) > args.kv_window:
+                before = _clen(past_key_values)
+                past_key_values, kv_positions = compress_kv_cache(
+                    past_key_values, model=model, sink_tokens=4,
                     keep_ratio=args.kv_keep_ratio,
-                    orig_seq_len=total_tokens)
-                after = past_key_values[0][0].shape[2]
+                    orig_position_ids=kv_positions)
+                after = _clen(past_key_values)
                 if after < before:
                     print(f"  step {total_tokens-1}: KV cache {before} -> {after} "
                           f"({(1-after/before)*100:.0f}% reduction)", flush=True)
