@@ -27,10 +27,13 @@ def main():
     parser.add_argument("--coeff-bits", type=int, default=6)
     parser.add_argument("--spectral-kv", action="store_true",
                         help="Enable spectral KV cache compression")
-    parser.add_argument("--kv-window", type=int, default=512,
-                        help="KV cache window before compression triggers")
-    parser.add_argument("--kv-keep-ratio", type=float, default=0.5,
-                        help="Fraction of DCT coefficients to keep (0-1)")
+    parser.add_argument("--kv-window", type=int, default=1024,
+                        help="KV cache length that triggers compression")
+    parser.add_argument("--kv-keep-ratio", type=float, default=0.25,
+                        help="Fraction of non-sink tokens to keep (0-1)")
+    parser.add_argument("--kv-strategy", type=str, default='sliding_window',
+                        choices=['dct_compress', 'sliding_window', 'dct_select'],
+                        help="KV cache compression strategy")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-k", type=int, default=None)
     args = parser.parse_args()
@@ -68,7 +71,8 @@ def main():
             return c[0][0].shape[2]
 
         print(f"Spectral KV: window={args.kv_window}, "
-              f"keep_ratio={args.kv_keep_ratio}", flush=True)
+              f"keep_ratio={args.kv_keep_ratio}, "
+              f"strategy={args.kv_strategy}", flush=True)
 
         past_key_values = None
         generated = input_ids.input_ids
@@ -103,7 +107,8 @@ def main():
                 past_key_values, kv_positions = compress_kv_cache(
                     past_key_values, model=model, sink_tokens=4,
                     keep_ratio=args.kv_keep_ratio,
-                    orig_position_ids=kv_positions)
+                    orig_position_ids=kv_positions,
+                    strategy=args.kv_strategy)
                 after = _clen(past_key_values)
                 if after < before:
                     print(f"  step {total_tokens-1}: KV cache {before} -> {after} "

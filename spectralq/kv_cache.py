@@ -53,23 +53,25 @@ def _build_cache(keys, values, is_dynamic):
 
 
 def compress_kv_cache(past_key_values, model=None, sink_tokens=4, keep_ratio=0.5,
-                      orig_position_ids=None):
-    """Compress the non-sink region of the KV cache via DCT low-pass.
-
-    If ``model`` and ``orig_position_ids`` are both provided, keys are
-    unrotated to content space before DCT and re-rotated with interpolated
-    position IDs afterward.  This prevents RoPE-position drift from
-    accumulating across multiple compression cycles.
+                      orig_position_ids=None, selection='low_freq',
+                      strategy='dct_compress'):
+    """Compress or select a subset of the KV cache.
 
     Args:
         past_key_values: ``DynamicCache`` or tuple-of-tuples.
         model: the HF model (used to access ``rotary_emb``).  If ``None``,
                keys are compressed in post-rotation space (legacy behaviour).
         sink_tokens: number of initial tokens left untouched.
-        keep_ratio: fraction of DCT coefficients to keep.
-        orig_position_ids: 1-D long tensor with the position of each token
-            in the current cache (length = cache length).  Ignored when
-            ``model is None``.
+        keep_ratio: fraction of non-sink tokens to keep.
+        orig_position_ids: 1-D long tensor with the position of each token.
+        selection: ``'low_freq'`` or ``'top_magnitude'`` (only for
+            ``strategy='dct_compress'``).
+        strategy: one of:
+            - ``'dct_compress'``: DCT low-pass reconstruction (original).
+            - ``'sliding_window'``: keep sink + last N tokens (fast,
+              no DCT).  N = int(non_sink_len * keep_ratio).
+            - ``'dct_select'``: DCT-guided token selection (no
+              reconstruction).  See ``kv_cache_select.py``.
 
     Returns:
         ``(new_cache, new_position_ids)`` where ``new_position_ids`` is a
@@ -102,6 +104,42 @@ def compress_kv_cache(past_key_values, model=None, sink_tokens=4, keep_ratio=0.5
         out = (orig_position_ids.clone() if orig_position_ids is not None
                else torch.arange(T))
         return past_key_values, out
+
+    # --- strategy: sliding window ---
+    if strategy == 'sliding_window':
+        keep_len = max(2, int(non_sink_len * keep_ratio))
+        new_keys = []
+        new_values = []
+        new_position_ids = torch.cat([
+            torch.arange(sink_tokens, device='cpu', dtype=torch.long),
+            torch.arange(T - keep_len, T, device='cpu', dtype=torch.long),
+        ])
+        for k, v in zip(keys, values):
+            Tk = k.shape[2]
+            nsl = Tk - sink_tokens
+            kl = max(2, int(nsl * keep_ratio))
+            if kl >= nsl:
+                new_keys.append(k)
+                new_values.append(v)
+            else:
+                new_keys.append(torch.cat([
+                    k[:, :, :sink_tokens],
+                    k[:, :, -kl:, :]
+                ], dim=2))
+                new_values.append(torch.cat([
+                    v[:, :, :sink_tokens],
+                    v[:, :, -kl:, :]
+                ], dim=2))
+        return _build_cache(new_keys, new_values, is_dynamic), new_position_ids
+
+    # --- strategy: dct_select ---
+    if strategy == 'dct_select':
+        from .kv_cache_select import compress_kv_cache_select
+        return compress_kv_cache_select(
+            past_key_values, keep_ratio=keep_ratio, sink_tokens=sink_tokens,
+            orig_position_ids=orig_position_ids)
+
+    # --- strategy: dct_compress (default) ---
 
     # --- new position IDs (interpolated) ---
     if orig_position_ids is not None:
@@ -147,11 +185,26 @@ def compress_kv_cache(past_key_values, model=None, sink_tokens=4, keep_ratio=0.5
             k_ns = _rope_transform(k_ns, cu.unsqueeze(1), su.unsqueeze(1), unrotate=True)
 
         dct_f = _dct_matrix(nsl, dev)
-        dct_l = _dct_matrix(kl, dev)
         k_freq = torch.einsum('kt,bhtd->bhkd', dct_f, k_ns.float())
         v_freq = torch.einsum('kt,bhtd->bhkd', dct_f, v_ns.float())
-        k_rc = torch.einsum('tk,bhkd->bhtd', dct_l.T, k_freq[:, :, :kl]).to(dt)
-        v_rc = torch.einsum('tk,bhkd->bhtd', dct_l.T, v_freq[:, :, :kl]).to(dt)
+
+        if selection == 'top_magnitude':
+            mag = k_freq.abs().mean(dim=-1)  # [B, H, nsl]
+            _, idx = torch.topk(mag, kl, dim=-1)  # [B, H, kl]
+            # Gather selected coefficients
+            idx_e = idx.unsqueeze(-1).expand(-1, -1, -1, D)
+            k_sel = torch.gather(k_freq, dim=2, index=idx_e)
+            v_sel = torch.gather(v_freq, dim=2, index=idx_e)
+            # Gather DCT basis at selected indices, first kl time points
+            dct_sub = dct_f[:, :kl].unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
+            idx_b = idx.unsqueeze(-1).expand(-1, -1, -1, kl)
+            dct_sel = torch.gather(dct_sub, dim=2, index=idx_b)  # [B, H, kl, kl]
+            k_rc = torch.einsum('bhkt,bhkd->bhtd', dct_sel, k_sel).to(dt)
+            v_rc = torch.einsum('bhkt,bhkd->bhtd', dct_sel, v_sel).to(dt)
+        else:
+            dct_l = _dct_matrix(kl, dev)
+            k_rc = torch.einsum('tk,bhkd->bhtd', dct_l.T, k_freq[:, :, :kl]).to(dt)
+            v_rc = torch.einsum('tk,bhkd->bhtd', dct_l.T, v_freq[:, :, :kl]).to(dt)
 
         if has_rope:
             np_ns = new_position_ids[sink_tokens:sink_tokens + kl].to(dev).unsqueeze(0)
